@@ -103,7 +103,12 @@
         button:active {
             transform: translateY(0);
         }
-        .error, .success {
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .error, .success, .warning {
             padding: 14px;
             border-radius: 10px;
             margin-top: 16px;
@@ -119,6 +124,11 @@
             background: #e8f5e9;
             color: #2e7d32;
             border-color: #2e7d32;
+        }
+        .warning {
+            background: #fff8e1;
+            color: #ff8f00;
+            border-color: #ff8f00;
         }
         .info-box {
             background: linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%);
@@ -166,6 +176,7 @@
         }
         .terminal-success { color: #56d364; }
         .terminal-error { color: #f85149; }
+        .terminal-warning { color: #ffa657; }
         .step-indicator {
             text-align: center;
             margin-bottom: 30px;
@@ -186,6 +197,13 @@
             background: #6a11cb;
             color: white;
             box-shadow: 0 0 0 4px rgba(106, 17, 203, 0.2);
+        }
+        .cooldown {
+            text-align: center;
+            color: #ff6b6b;
+            font-weight: 600;
+            margin-top: 15px;
+            font-size: 14px;
         }
     </style>
 </head>
@@ -242,7 +260,8 @@
 1x Rainbow Dragon ($80.5B/s)"></textarea>
             </div>
 
-            <button onclick="sendData()">Enviar via Webhook</button>
+            <button id="sendBtn" onclick="sendData()">Enviar via Webhook</button>
+            <div id="cooldownMsg" class="cooldown" style="display:none;"></div>
             <div id="sendError"></div>
             <div id="terminal" class="terminal"></div>
         </div>
@@ -250,6 +269,8 @@
 
     <script>
         const AUTH_TOKEN = "9fa2b83ce1d47f6a2ec95b1d8af34ce7b16d9a2fc58e3d7b1af64ec29d5ae8b37c2bf16e9c3ad75fe41c8db64ac87e2df93ea51bd26c9be35c8b2af4c17d4be6";
+        let lastSendTime = 0;
+        const COOLDOWN_MS = 5000; // 5 segundos
 
         function validateKey() {
             const key = document.getElementById('apiKey').value.trim();
@@ -286,8 +307,25 @@
         }
 
         async function sendData() {
+            const now = Date.now();
+            const sendBtn = document.getElementById('sendBtn');
+            const cooldownMsg = document.getElementById('cooldownMsg');
             const errorDiv = document.getElementById('sendError');
             const terminal = document.getElementById('terminal');
+
+            // Cooldown
+            if (now - lastSendTime < COOLDOWN_MS) {
+                const remaining = Math.ceil((COOLDOWN_MS - (now - lastSendTime)) / 1000);
+                cooldownMsg.style.display = 'block';
+                cooldownMsg.innerHTML = `Aguarde ${remaining}s antes de enviar novamente.`;
+                sendBtn.disabled = true;
+                setTimeout(() => {
+                    cooldownMsg.style.display = 'none';
+                    sendBtn.disabled = false;
+                }, COOLDOWN_MS - (now - lastSendTime));
+                return;
+            }
+
             const apiKey = document.getElementById('apiKey').value.trim();
             const servidor = document.getElementById('servidor').value.trim();
             const usuario = document.getElementById('usuario').value.trim();
@@ -297,6 +335,7 @@
             errorDiv.innerHTML = '';
             terminal.innerHTML = '';
             terminal.classList.remove('active');
+            cooldownMsg.style.display = 'none';
 
             if (!servidor || !usuario || !saldo || !brainrotsText.trim()) {
                 errorDiv.innerHTML = '<div class="error">Preencha todos os campos</div>';
@@ -326,6 +365,10 @@
                 Brainrots: validLines.join('\n')
             };
 
+            // UI: Desabilita botão
+            sendBtn.disabled = true;
+            sendBtn.textContent = "Enviando...";
+
             terminal.classList.add('active');
             terminal.innerHTML = '<div class="terminal-line">Conectando ao servidor...</div>';
             terminal.innerHTML += '<div class="terminal-line">Enviando dados...</div>';
@@ -342,12 +385,17 @@
                 });
 
                 const text = await res.text();
+                lastSendTime = Date.now();
 
                 if (res.status === 200) {
                     terminal.innerHTML += '<div class="terminal-line terminal-success">[200] Sucesso!</div>';
                     terminal.innerHTML += '<div class="terminal-line">Payload enviado:</div>';
                     terminal.innerHTML += `<div class="terminal-line"><pre>${JSON.stringify(payload, null, 2)}</pre></div>`;
                     errorDiv.innerHTML = '<div class="success">Enviado com sucesso!</div>';
+                } else if (res.status === 429) {
+                    terminal.innerHTML += '<div class="terminal-line terminal-warning">[429] Too Many Requests</div>';
+                    terminal.innerHTML += '<div class="terminal-line terminal-warning">O servidor está bloqueando envios rápidos.</div>';
+                    errorDiv.innerHTML = '<div class="warning">Muitas requisições! Espere alguns segundos e tente novamente.</div>';
                 } else {
                     terminal.innerHTML += `<div class="terminal-line terminal-error">[${res.status}] Falha</div>`;
                     terminal.innerHTML += `<div class="terminal-line terminal-error">Resposta: ${text.substring(0, 400)}</div>`;
@@ -356,6 +404,12 @@
             } catch (err) {
                 terminal.innerHTML += `<div class="terminal-line terminal-error">Erro: ${err.message}</div>`;
                 errorDiv.innerHTML = '<div class="error">Sem conexão. Tente novamente.</div>';
+            } finally {
+                // Reativa botão após cooldown
+                setTimeout(() => {
+                    sendBtn.disabled = false;
+                    sendBtn.textContent = "Enviar via Webhook";
+                }, COOLDOWN_MS);
             }
         }
     </script>
