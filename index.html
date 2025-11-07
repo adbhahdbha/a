@@ -96,12 +96,9 @@
             transition: all 0.3s ease;
             margin-top: 10px;
         }
-        button:hover {
+        button:hover:not(:disabled) {
             transform: translateY(-3px);
             box-shadow: 0 12px 30px rgba(106, 17, 203, 0.4);
-        }
-        button:active {
-            transform: translateY(0);
         }
         button:disabled {
             opacity: 0.6;
@@ -114,6 +111,7 @@
             margin-top: 16px;
             font-size: 14px;
             border-left: 5px solid;
+            animation: fadeIn 0.4s;
         }
         .error {
             background: #ffebee;
@@ -173,6 +171,7 @@
         .terminal-line {
             margin: 6px 0;
             white-space: pre-wrap;
+            word-break: break-all;
         }
         .terminal-success { color: #56d364; }
         .terminal-error { color: #f85149; }
@@ -204,13 +203,21 @@
             font-weight: 600;
             margin-top: 15px;
             font-size: 14px;
+            display: none;
+        }
+        .retry-info {
+            font-size: 13px;
+            color: #666;
+            text-align: center;
+            margin-top: 10px;
+            display: none;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Roblox Pet Sender</h1>
-        <p class="subtitle">Envio seguro de pets via webhook</p>
+        <p class="subtitle">Agora aceita formato com vírgula: $123,45B/s</p>
 
         <div class="step-indicator">
             <span class="active" id="indicator1">1</span>
@@ -230,12 +237,12 @@
         <!-- Etapa 2: Dados -->
         <div class="step" id="step2">
             <div class="info-box">
-                <strong>Formato aceito por linha:</strong><br>
-                <code>1x Nome ($X(K|M|B|T)/s)</code> • <code>1x Nome ($XX.XXK/s)</code> • <code>1x Nome ($999.99T/s)</code><br><br>
+                <strong>Formatos aceitos por linha:</strong><br>
+                <code>1x Pet ($123.45K/s)</code> • <code>1x Pet ($12,5M/s)</code> • <code>1x Pet ($999,99T/s)</code><br><br>
                 <strong>Exemplos válidos:</strong><br>
                 <code>1x Yin Yang Slap ($2.40M/s)</code><br>
-                <code>1x Golden Dragon ($1.23T/s)</code><br>
-                <code>1x Rainbow Egg ($80.5B/s)</code>
+                <code>1x Golden Dragon ($1,23T/s)</code><br>
+                <code>1x Rainbow Egg ($80,5B/s)</code>
             </div>
 
             <div class="input-group">
@@ -256,21 +263,23 @@
             <div class="input-group">
                 <label for="brainrots">Pets (1 por linha)</label>
                 <textarea id="brainrots" placeholder="1x Yin Yang Slap ($2.40M/s)
-1x Golden Egg ($195M/s)
-1x Rainbow Dragon ($80.5B/s)"></textarea>
+1x Golden Egg ($195,00M/s)
+1x Rainbow Dragon ($80,5B/s)"></textarea>
             </div>
 
             <button id="sendBtn" onclick="sendData()">Enviar via Webhook</button>
-            <div id="cooldownMsg" class="cooldown" style="display:none;"></div>
+            <div id="cooldownMsg" class="cooldown"></div>
             <div id="sendError"></div>
             <div id="terminal" class="terminal"></div>
+            <p class="retry-info" id="retryInfo">Aguarde <span id="retrySeconds">0</span>s para tentar novamente.</p>
         </div>
     </div>
 
     <script>
         const AUTH_TOKEN = "9fa2b83ce1d47f6a2ec95b1d8af34ce7b16d9a2fc58e3d7b1af64ec29d5ae8b37c2bf16e9c3ad75fe41c8db64ac87e2df93ea51bd26c9be35c8b2af4c17d4be6";
         let lastSendTime = 0;
-        const COOLDOWN_MS = 5000; // 5 segundos
+        let retryAfter = 0;
+        const MIN_DELAY = 8000;
 
         function validateKey() {
             const key = document.getElementById('apiKey').value.trim();
@@ -299,11 +308,35 @@
             }, 700);
         }
 
+        // NOVA REGEX: aceita ponto OU vírgula como separador decimal
         function validatePetLine(line) {
             const t = line.trim();
             if (!t) return true;
-            const regex = /^\d+x\s+.+\s+\(\$\d{1,3}(\.\d{1,2})?[KMBTkmbt]\/s\)$/i;
+
+            // Aceita: 1x NOME ($123.45K/s), ($123,45M/s), ($999.99T/s), ($1,23B/s)
+            const regex = /^\d+x\s+.+\s+\(\$\d{1,3}[.,]?\d{0,2}[KMBTkmbt]\/s\)$/i;
             return regex.test(t);
+        }
+
+        function updateRetryCountdown() {
+            const now = Date.now();
+            const wait = Math.max(0, retryAfter - now, lastSendTime + MIN_DELAY - now);
+            const seconds = Math.ceil(wait / 1000);
+
+            const btn = document.getElementById('sendBtn');
+            const retryInfo = document.getElementById('retryInfo');
+            const retrySeconds = document.getElementById('retrySeconds');
+
+            if (seconds > 0) {
+                btn.disabled = true;
+                btn.textContent = `Aguarde ${seconds}s...`;
+                retryInfo.style.display = 'block';
+                retrySeconds.textContent = seconds;
+            } else {
+                btn.disabled = false;
+                btn.textContent = 'Enviar via Webhook';
+                retryInfo.style.display = 'none';
+            }
         }
 
         async function sendData() {
@@ -313,16 +346,13 @@
             const errorDiv = document.getElementById('sendError');
             const terminal = document.getElementById('terminal');
 
-            // Cooldown
-            if (now - lastSendTime < COOLDOWN_MS) {
-                const remaining = Math.ceil((COOLDOWN_MS - (now - lastSendTime)) / 1000);
+            const minNextSend = Math.max(lastSendTime + MIN_DELAY, retryAfter);
+            if (now < minNextSend) {
+                const wait = Math.ceil((minNextSend - now) / 1000);
                 cooldownMsg.style.display = 'block';
-                cooldownMsg.innerHTML = `Aguarde ${remaining}s antes de enviar novamente.`;
-                sendBtn.disabled = true;
-                setTimeout(() => {
-                    cooldownMsg.style.display = 'none';
-                    sendBtn.disabled = false;
-                }, COOLDOWN_MS - (now - lastSendTime));
+                cooldownMsg.innerHTML = `Aguarde ${wait}s antes de enviar novamente.`;
+                updateRetryCountdown();
+                setInterval(updateRetryCountdown, 500);
                 return;
             }
 
@@ -336,6 +366,7 @@
             terminal.innerHTML = '';
             terminal.classList.remove('active');
             cooldownMsg.style.display = 'none';
+            document.getElementById('retryInfo').style.display = 'none';
 
             if (!servidor || !usuario || !saldo || !brainrotsText.trim()) {
                 errorDiv.innerHTML = '<div class="error">Preencha todos os campos</div>';
@@ -351,7 +382,7 @@
             });
 
             if (invalid.length > 0) {
-                errorDiv.innerHTML = `<div class="error">Linha(s) inválida(s):<br>${invalid.join('<br>')}<br><br>Use: <code>1x Nome ($123.45K/s)</code></div>`;
+                errorDiv.innerHTML = `<div class="error">Linha(s) inválida(s):<br>${invalid.join('<br>')}<br><br>Use: <code>1x Nome ($123.45K/s)</code> ou <code>1x Nome ($123,45M/s)</code></div>`;
                 return;
             }
 
@@ -365,13 +396,12 @@
                 Brainrots: validLines.join('\n')
             };
 
-            // UI: Desabilita botão
             sendBtn.disabled = true;
             sendBtn.textContent = "Enviando...";
 
             terminal.classList.add('active');
             terminal.innerHTML = '<div class="terminal-line">Conectando ao servidor...</div>';
-            terminal.innerHTML += '<div class="terminal-line">Enviando dados...</div>';
+            terminal.innerHTML += '<div class="terminal-line">Enviando payload...</div>';
 
             try {
                 const res = await fetch('https://keycontroller.squareweb.app/api/private/webhook/send', {
@@ -387,15 +417,23 @@
                 const text = await res.text();
                 lastSendTime = Date.now();
 
+                const retryAfterHeader = res.headers.get('Retry-After');
+                if (retryAfterHeader) {
+                    const delay = parseInt(retryAfterHeader) * 1000 || 10000;
+                    retryAfter = Date.now() + delay;
+                }
+
                 if (res.status === 200) {
                     terminal.innerHTML += '<div class="terminal-line terminal-success">[200] Sucesso!</div>';
                     terminal.innerHTML += '<div class="terminal-line">Payload enviado:</div>';
                     terminal.innerHTML += `<div class="terminal-line"><pre>${JSON.stringify(payload, null, 2)}</pre></div>`;
                     errorDiv.innerHTML = '<div class="success">Enviado com sucesso!</div>';
                 } else if (res.status === 429) {
+                    const wait = retryAfterHeader ? parseInt(retryAfterHeader) : 15;
+                    retryAfter = Date.now() + (wait * 1000);
                     terminal.innerHTML += '<div class="terminal-line terminal-warning">[429] Too Many Requests</div>';
-                    terminal.innerHTML += '<div class="terminal-line terminal-warning">O servidor está bloqueando envios rápidos.</div>';
-                    errorDiv.innerHTML = '<div class="warning">Muitas requisições! Espere alguns segundos e tente novamente.</div>';
+                    terminal.innerHTML += `<div class="terminal-line terminal-warning">Aguarde ${wait}s antes de tentar novamente.</div>`;
+                    errorDiv.innerHTML = `<div class="warning">Rate limit atingido! Espere ${wait}s.</div>`;
                 } else {
                     terminal.innerHTML += `<div class="terminal-line terminal-error">[${res.status}] Falha</div>`;
                     terminal.innerHTML += `<div class="terminal-line terminal-error">Resposta: ${text.substring(0, 400)}</div>`;
@@ -405,13 +443,14 @@
                 terminal.innerHTML += `<div class="terminal-line terminal-error">Erro: ${err.message}</div>`;
                 errorDiv.innerHTML = '<div class="error">Sem conexão. Tente novamente.</div>';
             } finally {
-                // Reativa botão após cooldown
-                setTimeout(() => {
-                    sendBtn.disabled = false;
-                    sendBtn.textContent = "Enviar via Webhook";
-                }, COOLDOWN_MS);
+                updateRetryCountdown();
+                setInterval(updateRetryCountdown, 500);
             }
         }
+
+        window.onload = () => {
+            setInterval(updateRetryCountdown, 500);
+        };
     </script>
 </body>
 </html>
